@@ -19,13 +19,13 @@ export default function FacultyDashboard() {
     enabled: !!profile?.user_id,
   });
 
-  const assignments = (teacherData as any)?.teacher_assignments ?? [];
+  const assignments: any[] = (teacherData as any)?.teacher_assignments ?? [];
 
   const { data: studentCount } = useQuery({
     queryKey: ["faculty-student-count", teacherData?.id],
     queryFn: async () => {
       if (!assignments.length) return 0;
-      const sectionIds = [...new Set(assignments.map((a: any) => a.section_id))];
+      const sectionIds: string[] = [...new Set(assignments.map((a: any) => a.section_id as string))];
       const { count } = await supabase
         .from("students")
         .select("id", { count: "exact", head: true })
@@ -43,7 +43,7 @@ export default function FacultyDashboard() {
         .from("attendance")
         .select("status")
         .eq("date", today)
-        .eq("marked_by", teacherData!.id);
+        .eq("marked_by", (teacherData as any)!.id);
       return data ?? [];
     },
     enabled: !!teacherData?.id,

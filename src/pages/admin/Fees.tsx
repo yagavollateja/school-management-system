@@ -17,7 +17,6 @@ const feeSchema = z.object({
   fee_type: z.string(),
   total_fee: z.coerce.number().min(0),
   paid_amount: z.coerce.number().min(0),
-  due_date: z.string().optional(),
   academic_year: z.string(),
   status: z.string(),
   remarks: z.string().optional(),
@@ -32,9 +31,8 @@ export default function AdminFees() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [filterStatus, setFilterStatus] = useState("all");
-  const { register, handleSubmit, control, reset, formState: { errors } } = useForm<FeeForm>({
-    resolver: zodResolver(feeSchema),
-    defaultValues: { academic_year: new Date().getFullYear().toString(), status: "pending", fee_type: "tuition" },
+  const { register, handleSubmit, control, reset } = useForm<FeeForm>({
+    defaultValues: { academic_year: new Date().getFullYear().toString(), status: "pending", fee_type: "tuition", total_fee: 0, paid_amount: 0 },
   });
 
   const { data: students } = useQuery({
@@ -62,11 +60,15 @@ export default function AdminFees() {
 
   const addFee = useMutation({
     mutationFn: async (data: FeeForm) => {
+      const computedStatus = data.paid_amount >= data.total_fee ? "paid" : data.paid_amount > 0 ? "partial" : data.status;
       const { error } = await supabase.from("fees").insert({
-        ...data,
-        due_date: data.due_date || null,
-        remarks: data.remarks || null,
-        status: data.paid_amount >= data.total_fee ? "paid" : data.paid_amount > 0 ? "partial" : data.status,
+        student_id: data.student_id,
+        fee_type: data.fee_type,
+        total_fee: data.total_fee,
+        paid_amount: data.paid_amount,
+        academic_year: data.academic_year,
+        status: computedStatus,
+        remarks: data.remarks ?? null,
       });
       if (error) throw error;
     },
@@ -76,8 +78,6 @@ export default function AdminFees() {
 
   const totalCollected = fees?.reduce((s, f) => s + Number(f.paid_amount), 0) ?? 0;
   const totalDue = fees?.reduce((s, f) => s + Number(f.due_amount), 0) ?? 0;
-
-  const filtered = filterStatus === "all" ? fees : fees?.filter(f => f.status === filterStatus);
 
   return (
     <div className="space-y-6">
@@ -131,10 +131,6 @@ export default function AdminFees() {
                   <Input {...register("paid_amount")} type="number" placeholder="0" />
                 </div>
                 <div>
-                  <Label>Due Date</Label>
-                  <Input {...register("due_date")} type="date" />
-                </div>
-                <div>
                   <Label>Status</Label>
                   <Controller name="status" control={control} render={({ field }) => (
                     <Select onValueChange={field.onChange} value={field.value}>
@@ -169,7 +165,6 @@ export default function AdminFees() {
         ))}
       </div>
 
-      {/* Filter */}
       <Select value={filterStatus} onValueChange={setFilterStatus}>
         <SelectTrigger className="w-44"><SelectValue placeholder="All Status" /></SelectTrigger>
         <SelectContent>
@@ -178,7 +173,6 @@ export default function AdminFees() {
         </SelectContent>
       </Select>
 
-      {/* Table */}
       <div className="rounded-xl border overflow-hidden" style={{ borderColor: "hsl(var(--border))" }}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -192,9 +186,9 @@ export default function AdminFees() {
             <tbody>
               {isLoading ? (
                 <tr><td colSpan={8} className="text-center py-8" style={{ color: "hsl(var(--muted-foreground))" }}>Loading...</td></tr>
-              ) : filtered?.length === 0 ? (
+              ) : fees?.length === 0 ? (
                 <tr><td colSpan={8} className="text-center py-8" style={{ color: "hsl(var(--muted-foreground))" }}>No fee records</td></tr>
-              ) : filtered?.map((f: any) => (
+              ) : fees?.map((f: any) => (
                 <tr key={f.id} style={{ borderTop: "1px solid hsl(var(--border))" }}>
                   <td className="px-4 py-3 font-medium">{f.students?.profiles?.name ?? "—"}</td>
                   <td className="px-4 py-3">{f.students?.classes?.name ?? "—"}</td>

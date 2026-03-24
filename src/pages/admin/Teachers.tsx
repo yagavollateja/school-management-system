@@ -6,12 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
-import { Plus, Search, UserPlus, BookOpen, Trash2 } from "lucide-react";
+import { Plus, UserPlus, BookOpen, Trash2, Search } from "lucide-react";
 
 const teacherSchema = z.object({
   name: z.string().min(2),
@@ -96,7 +95,12 @@ export default function AdminTeachers() {
 
   const assignTeacher = useMutation({
     mutationFn: async (data: AssignForm) => {
-      const { error } = await supabase.from("teacher_assignments").insert(data);
+      const { error } = await supabase.from("teacher_assignments").insert({
+        teacher_id: data.teacher_id,
+        class_id: data.class_id,
+        section_id: data.section_id,
+        subject: data.subject,
+      });
       if (error) throw error;
     },
     onSuccess: () => { toast.success("Assignment saved!"); qc.invalidateQueries({ queryKey: ["teachers-list"] }); setOpenAssign(false); assignForm.reset(); },

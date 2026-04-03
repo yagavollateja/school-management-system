@@ -20,25 +20,58 @@ export default function FacultyAttendance() {
   const { data: teacher } = useQuery({
     queryKey: ["my-teacher", profile?.user_id],
     queryFn: async () => {
-      const { data } = await supabase.from("teachers").select("*, teacher_assignments(*, classes(name), sections(name))")
+      const { data } = await supabase.from("teachers").select("id, user_id")
         .eq("user_id", profile!.user_id).single();
       return data;
     },
     enabled: !!profile?.user_id,
   });
 
-  const assignments = (teacher as any)?.teacher_assignments ?? [];
-  const uniqueSections = [...new Map(assignments.map((a: any) => [a.section_id, a])).values()];
+  const { data: assignments } = useQuery({
+    queryKey: ["teacher-assignments", teacher?.id],
+    queryFn: async () => {
+      if (!teacher?.id) return [];
+      const { data } = await supabase
+        .from("teacher_assignments")
+        .select("id, section_id, class_id, classes(name), sections(name)")
+        .eq("teacher_id", teacher.id);
+      return data ?? [];
+    },
+    enabled: !!teacher?.id,
+  });
+
+  const uniqueSections = assignments?.map((a: any) => ({
+    ...a,
+    sectionId: a.section_id,
+    className: a.classes?.name,
+    sectionName: a.sections?.name,
+  })) ?? [];
 
   const { data: students } = useQuery({
     queryKey: ["faculty-students", selectedSection],
     queryFn: async () => {
+      if (!selectedSection) return [];
+      
       const { data } = await supabase
         .from("students")
-        .select("*, profiles!students_user_id_fkey(name)")
+        .select("id, user_id, roll_number")
         .eq("section_id", selectedSection)
         .order("roll_number");
-      return data ?? [];
+      
+      if (!data) return [];
+      
+      const userIds = data.map(s => s.user_id);
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("user_id, name")
+        .in("user_id", userIds);
+      
+      const profileMap = new Map(profiles?.map(p => [p.user_id, p]) ?? []);
+      
+      return data.map(s => ({
+        ...s,
+        profile: profileMap.get(s.user_id) ?? null,
+      }));
     },
     enabled: !!selectedSection,
   });
@@ -60,12 +93,12 @@ export default function FacultyAttendance() {
 
   const saveAttendance = useMutation({
     mutationFn: async () => {
-      if (!students?.length || !teacher) return;
+      if (!students?.length || !teacher?.id) return;
       const records = students.map(s => ({
         student_id: s.id,
         date,
         status: attendanceMap[s.id] ?? "absent",
-        marked_by: (teacher as any).id,
+        marked_by: teacher.id,
       }));
       const { error } = await supabase.from("attendance").upsert(records, { onConflict: "student_id,date" });
       if (error) throw error;
@@ -105,8 +138,8 @@ export default function FacultyAttendance() {
             <SelectTrigger className="w-64"><SelectValue placeholder="Select section" /></SelectTrigger>
             <SelectContent>
               {uniqueSections.map((a: any) => (
-                <SelectItem key={a.section_id} value={a.section_id}>
-                  {a.classes?.name} — Section {a.sections?.name}
+                <SelectItem key={a.sectionId} value={a.sectionId}>
+                  {a.className} — Section {a.sectionName}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -153,7 +186,7 @@ export default function FacultyAttendance() {
                   return (
                     <tr key={s.id} style={{ borderTop: "1px solid hsl(var(--border))" }}>
                       <td className="px-4 py-3 font-mono text-xs">{s.roll_number}</td>
-                      <td className="px-4 py-3 font-medium">{s.profiles?.name ?? "—"}</td>
+                      <td className="px-4 py-3 font-medium">{s.profile?.name ?? "—"}</td>
                       {(["present", "absent", "late", "excused"] as AttendanceStatus[]).map(st => (
                         <td key={st} className="px-4 py-3">
                           <button

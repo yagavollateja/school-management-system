@@ -221,6 +221,13 @@ CREATE POLICY "Student can view own record" ON public.students
 CREATE POLICY "Teacher can view assigned students" ON public.students
   FOR SELECT USING (public.is_teacher_for_section(section_id));
 
+-- Allow authenticated users to view classes and sections via joins
+CREATE POLICY "Authenticated can view classes" ON public.classes
+  FOR SELECT USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated can view sections" ON public.sections
+  FOR SELECT USING (auth.role() = 'authenticated');
+
 -- TEACHERS
 CREATE POLICY "Admin can manage teachers" ON public.teachers
   FOR ALL USING (public.is_admin());

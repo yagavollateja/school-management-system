@@ -22,13 +22,55 @@ export default function AdminAttendance() {
     queryFn: async () => {
       let q = supabase
         .from("attendance")
-        .select(`*, students!inner(*, profiles!students_user_id_fkey(name), classes(name), sections(name))`)
+        .select("*, student_id")
         .eq("date", filterDate);
-      if (filterClass !== "all") {
-        q = q.eq("students.class_id", filterClass);
-      }
       const { data } = await q.order("created_at", { ascending: false });
-      return data ?? [];
+      if (!data) return [];
+      
+      // Fetch student and related data
+      const studentIds = [...new Set(data.map(r => r.student_id))];
+      const [studentsRes, profilesRes] = await Promise.all([
+        supabase.from("students").select("id, user_id, class_id, section_id").in("id", studentIds),
+        supabase.from("profiles").select("user_id, name, email")
+      ]);
+      
+      const studentMap = new Map(studentsRes.data?.map(s => [s.id, s]) ?? []);
+      const profileMap = new Map(profilesRes.data?.map(p => [p.user_id, p]) ?? []);
+      
+      const classIds = [...new Set(studentsRes.data?.map(s => s.class_id) ?? [])];
+      const sectionIds = [...new Set(studentsRes.data?.map(s => s.section_id) ?? [])];
+      
+      const [classesRes, sectionsRes] = await Promise.all([
+        supabase.from("classes").select("id, name").in("id", classIds),
+        supabase.from("sections").select("id, name").in("id", sectionIds)
+      ]);
+      
+      const classMap = new Map(classesRes.data?.map(c => [c.id, c]) ?? []);
+      const sectionMap = new Map(sectionsRes.data?.map(s => [s.id, s]) ?? []);
+      
+      let filtered = data.map(r => {
+        const student = studentMap.get(r.student_id);
+        const profile = student ? profileMap.get(student.user_id) : null;
+        const cls = student ? classMap.get(student.class_id) : null;
+        const section = student ? sectionMap.get(student.section_id) : null;
+        
+        return {
+          ...r,
+          students: {
+            ...student,
+            profile: profile,
+            classes: cls,
+            sections: section
+          }
+        };
+      });
+      
+      // Apply class filter after fetching
+      if (filterClass !== "all") {
+        filtered = filtered.filter(r => r.students?.class_id === filterClass);
+      }
+      
+      return filtered;
     },
   });
 

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -33,9 +33,15 @@ export default function AdminStudents() {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [filterClass, setFilterClass] = useState("all");
+  const [editingStudent, setEditingStudent] = useState<any>(null);
+  const [deletingStudent, setDeletingStudent] = useState<any>(null);
 
-  const { register, handleSubmit, control, watch, reset, formState: { errors } } = useForm<StudentForm>({
+  const { register, handleSubmit, control, watch, reset, setValue, formState: { errors } } = useForm<StudentForm>({
     resolver: zodResolver(schema),
+    defaultValues: {
+      class_id: "",
+      section_id: "",
+    },
   });
   const selectedClass = watch("class_id");
 
@@ -62,42 +68,47 @@ export default function AdminStudents() {
     queryFn: async () => {
       const { data } = await supabase
         .from("students")
-        .select(`
-          *,
-          profiles!students_user_id_fkey(name, email, phone),
-          classes(name),
-          sections(name)
-        `)
+        .select("*, classes(name), sections(name)")
         .order("created_at", { ascending: false });
-      return data ?? [];
+      
+      if (!data) return [];
+      
+      // Fetch profiles separately
+      const userIds = data.map(s => s.user_id);
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("user_id, name, email, phone")
+        .in("user_id", userIds);
+      
+      // Merge profiles into students
+      const profileMap = new Map(profiles?.map(p => [p.user_id, p]) ?? []);
+      return data.map(s => ({
+        ...s,
+        profile: profileMap.get(s.user_id) ?? null
+      }));
     },
   });
 
   const createStudent = useMutation({
     mutationFn: async (data: StudentForm) => {
-      const { data: session } = await supabase.auth.getSession();
-      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-create-user`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.session?.access_token}`,
-        },
-        body: JSON.stringify({ name: data.name, email: data.email, password: data.password, role: "student", phone: data.phone }),
+      const { data: result, error } = await supabase.functions.invoke("admin-create-user", {
+        body: { 
+          name: data.name, 
+          email: data.email, 
+          password: data.password, 
+          role: "student", 
+          phone: data.phone,
+          class_id: data.class_id,
+          section_id: data.section_id,
+          roll_number: data.roll_number,
+          parent_name: data.parent_name,
+          parent_phone: data.parent_phone,
+          address: data.address,
+          date_of_birth: data.date_of_birth
+        }
       });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error);
-
-      const { error } = await supabase.from("students").insert({
-        user_id: result.user_id,
-        class_id: data.class_id,
-        section_id: data.section_id,
-        roll_number: data.roll_number,
-        parent_name: data.parent_name ?? null,
-        parent_phone: data.parent_phone ?? null,
-        address: data.address ?? null,
-        date_of_birth: data.date_of_birth ?? null,
-      });
-      if (error) throw error;
+      if (error) throw new Error(error.message);
+      if (result?.error) throw new Error(result.error);
     },
     onSuccess: () => {
       toast.success("Student created successfully!");
@@ -108,8 +119,20 @@ export default function AdminStudents() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const deleteStudent = useMutation({
+    mutationFn: async (student: any) => {
+      const { error } = await supabase.from("students").delete().eq("id", student.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Student deleted!");
+      qc.invalidateQueries({ queryKey: ["students-list"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const filtered = students?.filter(s => {
-    const name = (s as any).profiles?.name?.toLowerCase() ?? "";
+    const name = s.profile?.name?.toLowerCase() ?? "";
     const cls = filterClass === "all" || s.class_id === filterClass;
     return name.includes(search.toLowerCase()) && cls;
   });
@@ -127,6 +150,7 @@ export default function AdminStudents() {
           </DialogTrigger>
           <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
             <DialogHeader><DialogTitle>Add New Student</DialogTitle></DialogHeader>
+            <DialogDescription>Enter the student's details to create a new account.</DialogDescription>
             <form onSubmit={handleSubmit((d) => createStudent.mutate(d))} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -196,6 +220,92 @@ export default function AdminStudents() {
             </form>
           </DialogContent>
         </Dialog>
+
+        {/* Edit Student Dialog */}
+        <Dialog open={!!editingStudent} onOpenChange={(open) => !open && setEditingStudent(null)}>
+          <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader><DialogTitle>Edit Student</DialogTitle></DialogHeader>
+            <DialogDescription>Update the student's details.</DialogDescription>
+            <form onSubmit={handleSubmit(async (data) => {
+              if (!editingStudent) return;
+              try {
+                await supabase.from("profiles").update({ name: data.name, phone: data.phone ?? null }).eq("user_id", editingStudent.user_id);
+                await supabase.from("students").update({
+                  class_id: data.class_id,
+                  section_id: data.section_id,
+                  roll_number: data.roll_number,
+                  parent_name: data.parent_name ?? null,
+                  parent_phone: data.parent_phone ?? null,
+                  address: data.address ?? null,
+                  date_of_birth: data.date_of_birth ?? null,
+                }).eq("id", editingStudent.id);
+                toast.success("Student updated!");
+                qc.invalidateQueries({ queryKey: ["students-list"] });
+                setEditingStudent(null);
+              } catch (e: any) {
+                toast.error(e.message);
+              }
+            })} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Full Name *</Label>
+                  <Input {...register("name")} placeholder="Student name" />
+                </div>
+                <div>
+                  <Label>Class *</Label>
+                  <Controller name="class_id" control={control} render={({ field }) => (
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <SelectTrigger><SelectValue placeholder="Select class" /></SelectTrigger>
+                      <SelectContent>{classes?.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                    </Select>
+                  )} />
+                </div>
+                <div>
+                  <Label>Section *</Label>
+                  <Controller name="section_id" control={control} render={({ field }) => (
+                    <Select onValueChange={field.onChange} value={field.value} disabled={!selectedClass}>
+                      <SelectTrigger><SelectValue placeholder="Select section" /></SelectTrigger>
+                      <SelectContent>{sections?.map(s => <SelectItem key={s.id} value={s.id}>Section {s.name}</SelectItem>)}</SelectContent>
+                    </Select>
+                  )} />
+                </div>
+                <div>
+                  <Label>Roll Number *</Label>
+                  <Input {...register("roll_number")} type="number" />
+                </div>
+                <div>
+                  <Label>Date of Birth</Label>
+                  <Input {...register("date_of_birth")} type="date" />
+                </div>
+                <div>
+                  <Label>Parent Name</Label>
+                  <Input {...register("parent_name")} />
+                </div>
+                <div>
+                  <Label>Parent Phone</Label>
+                  <Input {...register("parent_phone")} />
+                </div>
+              </div>
+              <div>
+                <Label>Address</Label>
+                <Input {...register("address")} />
+              </div>
+              <Button type="submit" className="w-full">Save Changes</Button>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog open={!!deletingStudent} onOpenChange={(open) => !open && setDeletingStudent(null)}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Delete Student</DialogTitle></DialogHeader>
+            <DialogDescription>Are you sure you want to delete {deletingStudent?.profile?.name}? This action cannot be undone.</DialogDescription>
+            <div className="flex gap-3 justify-end">
+              <Button variant="outline" onClick={() => setDeletingStudent(null)}>Cancel</Button>
+              <Button variant="destructive" onClick={() => deleteStudent.mutate(deletingStudent)}>Delete</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {/* Filters */}
@@ -232,14 +342,25 @@ export default function AdminStudents() {
               ) : filtered?.map((s: any, i) => (
                 <tr key={s.id} className={i % 2 === 0 ? "" : ""} style={{ borderTop: "1px solid hsl(var(--border))" }}>
                   <td className="px-4 py-3 font-mono text-xs">{s.roll_number}</td>
-                  <td className="px-4 py-3 font-medium">{s.profiles?.name ?? "—"}</td>
-                  <td className="px-4 py-3" style={{ color: "hsl(var(--muted-foreground))" }}>{s.profiles?.email ?? "—"}</td>
+                  <td className="px-4 py-3 font-medium">{s.profile?.name ?? "—"}</td>
+                  <td className="px-4 py-3" style={{ color: "hsl(var(--muted-foreground))" }}>{s.profile?.email ?? "—"}</td>
                   <td className="px-4 py-3">{s.classes?.name ?? "—"}</td>
                   <td className="px-4 py-3">{s.sections?.name ?? "—"}</td>
                   <td className="px-4 py-3" style={{ color: "hsl(var(--muted-foreground))" }}>{s.parent_name ?? "—"}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" className="h-7 w-7"><Edit className="w-3.5 h-3.5" /></Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+                        setEditingStudent(s);
+                        setValue("name", s.profile?.name ?? "");
+                        setValue("class_id", s.class_id);
+                        setValue("section_id", s.section_id);
+                        setValue("roll_number", s.roll_number);
+                        setValue("parent_name", s.parent_name ?? "");
+                        setValue("parent_phone", s.parent_phone ?? "");
+                        setValue("address", s.address ?? "");
+                        setValue("date_of_birth", s.date_of_birth ?? "");
+                      }}><Edit className="w-3.5 h-3.5" /></Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-red-500" onClick={() => setDeletingStudent(s)}><Trash2 className="w-3.5 h-3.5" /></Button>
                     </div>
                   </td>
                 </tr>

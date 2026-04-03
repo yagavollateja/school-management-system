@@ -11,7 +11,7 @@ export default function FacultyDashboard() {
     queryFn: async () => {
       const { data } = await supabase
         .from("teachers")
-        .select(`*, teacher_assignments(*, classes(name), sections(name))`)
+        .select("id, user_id")
         .eq("user_id", profile!.user_id)
         .single();
       return data;
@@ -19,21 +19,62 @@ export default function FacultyDashboard() {
     enabled: !!profile?.user_id,
   });
 
-  const assignments: any[] = (teacherData as any)?.teacher_assignments ?? [];
+  const { data: assignments } = useQuery({
+    queryKey: ["teacher-assignments", teacherData?.id],
+    queryFn: async () => {
+      if (!teacherData?.id) return [];
+      const { data } = await supabase
+        .from("teacher_assignments")
+        .select("id, section_id, subject, class_id")
+        .eq("teacher_id", teacherData.id);
+      return data ?? [];
+    },
+    enabled: !!teacherData?.id,
+  });
 
   const { data: studentCount } = useQuery({
     queryKey: ["faculty-student-count", teacherData?.id],
     queryFn: async () => {
-      if (!assignments.length) return 0;
-      const sectionIds: string[] = [...new Set(assignments.map((a: any) => a.section_id as string))];
+      if (!assignments?.length) return 0;
+      const sectionIds = [...new Set(assignments.map((a: any) => a.section_id))];
       const { count } = await supabase
         .from("students")
         .select("id", { count: "exact", head: true })
         .in("section_id", sectionIds);
       return count ?? 0;
     },
-    enabled: !!teacherData?.id,
+    enabled: !!assignments?.length,
   });
+
+  const { data: classData } = useQuery({
+    queryKey: ["teacher-classes", assignments],
+    queryFn: async () => {
+      if (!assignments?.length) return [];
+      const classIds = [...new Set(assignments.map((a: any) => a.class_id))];
+      const { data } = await supabase.from("classes").select("id, name").in("id", classIds);
+      const classMap = new Map(data?.map(c => [c.id, c]) ?? []);
+      return classMap;
+    },
+    enabled: !!assignments?.length,
+  });
+
+  const { data: sectionData } = useQuery({
+    queryKey: ["teacher-sections", assignments],
+    queryFn: async () => {
+      if (!assignments?.length) return [];
+      const sectionIds = [...new Set(assignments.map((a: any) => a.section_id))];
+      const { data } = await supabase.from("sections").select("id, name").in("id", sectionIds);
+      const sectionMap = new Map(data?.map(s => [s.id, s]) ?? []);
+      return sectionMap;
+    },
+    enabled: !!assignments?.length,
+  });
+
+  const enrichedAssignments = assignments?.map((a: any) => ({
+    ...a,
+    classes: classData?.get(a.class_id) ?? null,
+    sections: sectionData?.get(a.section_id) ?? null,
+  })) ?? [];
 
   const { data: todayAttendance } = useQuery({
     queryKey: ["faculty-today-attendance", teacherData?.id],
@@ -43,7 +84,7 @@ export default function FacultyDashboard() {
         .from("attendance")
         .select("status")
         .eq("date", today)
-        .eq("marked_by", (teacherData as any)!.id);
+        .eq("marked_by", teacherData!.id);
       return data ?? [];
     },
     enabled: !!teacherData?.id,
@@ -61,7 +102,7 @@ export default function FacultyDashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { label: "My Students", value: studentCount ?? 0, icon: Users, color: "hsl(199 89% 48%)" },
-          { label: "Assignments", value: assignments.length, icon: BookOpen, color: "hsl(var(--success))" },
+          { label: "Assignments", value: enrichedAssignments.length, icon: BookOpen, color: "hsl(var(--success))" },
           { label: "Marked Today", value: todayAttendance?.length ?? 0, icon: ClipboardCheck, color: "hsl(var(--accent))" },
           { label: "Present Today", value: todayAttendance?.filter((a: any) => a.status === "present").length ?? 0, icon: Calendar, color: "hsl(var(--primary))" },
         ].map(({ label, value, icon: Icon, color }) => (
@@ -81,15 +122,15 @@ export default function FacultyDashboard() {
 
       <div className="stat-card">
         <h3 className="font-semibold mb-4">My Assignments</h3>
-        {assignments.length === 0 ? (
+        {enrichedAssignments.length === 0 ? (
           <p className="text-sm" style={{ color: "hsl(var(--muted-foreground))" }}>No assignments yet. Contact admin to assign classes.</p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {assignments.map((a: any) => (
+            {enrichedAssignments.map((a: any) => (
               <div key={a.id} className="p-3 rounded-lg" style={{ background: "hsl(var(--muted))" }}>
                 <p className="font-semibold text-sm">{a.subject}</p>
                 <p className="text-xs mt-0.5" style={{ color: "hsl(var(--muted-foreground))" }}>
-                  {a.classes?.name} — Section {a.sections?.name}
+                  {a.classes?.name ?? "—"} — Section {a.sections?.name ?? "—"}
                 </p>
               </div>
             ))}

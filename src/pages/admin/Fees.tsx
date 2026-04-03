@@ -40,8 +40,31 @@ export default function AdminFees() {
     queryFn: async () => {
       const { data } = await supabase
         .from("students")
-        .select("id, profiles!students_user_id_fkey(name), classes(name), sections(name)");
-      return data ?? [];
+        .select("id, user_id, class_id, section_id");
+      
+      if (!data) return [];
+      
+      // Fetch profiles and class/section separately
+      const userIds = data.map(s => s.user_id);
+      const classIds = [...new Set(data.map(s => s.class_id))];
+      const sectionIds = [...new Set(data.map(s => s.section_id))];
+      
+      const [profilesRes, classesRes, sectionsRes] = await Promise.all([
+        supabase.from("profiles").select("user_id, name, email").in("user_id", userIds),
+        supabase.from("classes").select("id, name").in("id", classIds),
+        supabase.from("sections").select("id, name").in("id", sectionIds)
+      ]);
+      
+      const profileMap = new Map(profilesRes.data?.map(p => [p.user_id, p]) ?? []);
+      const classMap = new Map(classesRes.data?.map(c => [c.id, c]) ?? []);
+      const sectionMap = new Map(sectionsRes.data?.map(s => [s.id, s]) ?? []);
+      
+      return data.map(s => ({
+        ...s,
+        profile: profileMap.get(s.user_id) ?? null,
+        classes: classMap.get(s.class_id) ?? null,
+        sections: sectionMap.get(s.section_id) ?? null
+      }));
     },
   });
 
@@ -50,11 +73,50 @@ export default function AdminFees() {
     queryFn: async () => {
       let q = supabase
         .from("fees")
-        .select(`*, students(*, profiles!students_user_id_fkey(name), classes(name), sections(name))`)
+        .select("*")
         .order("created_at", { ascending: false });
       if (filterStatus !== "all") q = q.eq("status", filterStatus);
       const { data } = await q;
-      return data ?? [];
+      if (!data) return [];
+      
+      // Fetch related data separately
+      const studentIds = [...new Set(data.map(f => f.student_id))];
+      const [studentsRes, profilesRes] = await Promise.all([
+        supabase.from("students").select("id, user_id, class_id, section_id").in("id", studentIds),
+        supabase.from("profiles").select("user_id, name, email")
+      ]);
+      
+      const studentMap = new Map(studentsRes.data?.map(s => [s.id, s]) ?? []);
+      const profileMap = new Map(profilesRes.data?.map(p => [p.user_id, p]) ?? []);
+      
+      // Get class and section info
+      const classIds = [...new Set(studentsRes.data?.map(s => s.class_id) ?? [])];
+      const sectionIds = [...new Set(studentsRes.data?.map(s => s.section_id) ?? [])];
+      
+      const [classesRes, sectionsRes] = await Promise.all([
+        supabase.from("classes").select("id, name").in("id", classIds),
+        supabase.from("sections").select("id, name").in("id", sectionIds)
+      ]);
+      
+      const classMap = new Map(classesRes.data?.map(c => [c.id, c]) ?? []);
+      const sectionMap = new Map(sectionsRes.data?.map(s => [s.id, s]) ?? []);
+      
+      return data.map(f => {
+        const student = studentMap.get(f.student_id);
+        const profile = student ? profileMap.get(student.user_id) : null;
+        const cls = student ? classMap.get(student.class_id) : null;
+        const section = student ? sectionMap.get(student.section_id) : null;
+        
+        return {
+          ...f,
+          students: {
+            ...student,
+            profile: profile,
+            classes: cls,
+            sections: section
+          }
+        };
+      });
     },
   });
 
@@ -101,7 +163,7 @@ export default function AdminFees() {
                     <SelectContent>
                       {students?.map((s: any) => (
                         <SelectItem key={s.id} value={s.id}>
-                          {s.profiles?.name} — {s.classes?.name} {s.sections?.name}
+                          {s.profile?.name} — {s.classes?.name} {s.sections?.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -190,7 +252,7 @@ export default function AdminFees() {
                 <tr><td colSpan={8} className="text-center py-8" style={{ color: "hsl(var(--muted-foreground))" }}>No fee records</td></tr>
               ) : fees?.map((f: any) => (
                 <tr key={f.id} style={{ borderTop: "1px solid hsl(var(--border))" }}>
-                  <td className="px-4 py-3 font-medium">{f.students?.profiles?.name ?? "—"}</td>
+                  <td className="px-4 py-3 font-medium">{f.students?.profile?.name ?? "—"}</td>
                   <td className="px-4 py-3">{f.students?.classes?.name ?? "—"}</td>
                   <td className="px-4 py-3 capitalize">{f.fee_type}</td>
                   <td className="px-4 py-3 font-mono">₹{Number(f.total_fee).toLocaleString()}</td>

@@ -5,12 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
-import { Plus, UserPlus, BookOpen, Trash2, Search } from "lucide-react";
+import { Plus, UserPlus, BookOpen, Trash2, Search, Edit } from "lucide-react";
 
 const teacherSchema = z.object({
   name: z.string().min(2),
@@ -38,9 +38,19 @@ export default function AdminTeachers() {
   const [openCreate, setOpenCreate] = useState(false);
   const [openAssign, setOpenAssign] = useState(false);
   const [search, setSearch] = useState("");
+  const [editingTeacher, setEditingTeacher] = useState<any>(null);
+  const [deletingTeacher, setDeletingTeacher] = useState<any>(null);
 
   const createForm = useForm<TeacherForm>({ resolver: zodResolver(teacherSchema) });
-  const assignForm = useForm<AssignForm>({ resolver: zodResolver(assignSchema) });
+  const assignForm = useForm<AssignForm>({ 
+    resolver: zodResolver(assignSchema),
+    defaultValues: {
+      teacher_id: "",
+      class_id: "",
+      section_id: "",
+      subject: "",
+    },
+  });
   const selectedClassAssign = assignForm.watch("class_id");
 
   const { data: teachers, isLoading } = useQuery({
@@ -48,9 +58,31 @@ export default function AdminTeachers() {
     queryFn: async () => {
       const { data } = await supabase
         .from("teachers")
-        .select(`*, profiles!teachers_user_id_fkey(name, email, phone), teacher_assignments(*, classes(name), sections(name))`)
+        .select("*")
         .order("created_at", { ascending: false });
-      return data ?? [];
+      
+      if (!data) return [];
+      
+      // Fetch profiles and assignments separately
+      const userIds = data.map(t => t.user_id);
+      const [profilesRes, assignmentsRes] = await Promise.all([
+        supabase.from("profiles").select("user_id, name, email, phone").in("user_id", userIds),
+        supabase.from("teacher_assignments").select("*, classes(name), sections(name)").in("teacher_id", data.map(t => t.id))
+      ]);
+      
+      const profileMap = new Map(profilesRes.data?.map(p => [p.user_id, p]) ?? []);
+      const assignmentsMap = new Map<string, any[]>();
+      assignmentsRes.data?.forEach(a => {
+        const list = assignmentsMap.get(a.teacher_id) ?? [];
+        list.push(a);
+        assignmentsMap.set(a.teacher_id, list);
+      });
+      
+      return data.map(t => ({
+        ...t,
+        profile: profileMap.get(t.user_id) ?? null,
+        teacher_assignments: assignmentsMap.get(t.id) ?? []
+      }));
     },
   });
 
@@ -74,20 +106,19 @@ export default function AdminTeachers() {
 
   const createTeacher = useMutation({
     mutationFn: async (data: TeacherForm) => {
-      const { data: session } = await supabase.auth.getSession();
-      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-create-user`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.session?.access_token}` },
-        body: JSON.stringify({ name: data.name, email: data.email, password: data.password, role: "faculty", phone: data.phone }),
+      const { data: result, error } = await supabase.functions.invoke("admin-create-user", {
+        body: { 
+          name: data.name, 
+          email: data.email, 
+          password: data.password, 
+          role: "faculty", 
+          phone: data.phone,
+          qualification: data.qualification,
+          experience_years: data.experience_years
+        }
       });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error);
-      const { error } = await supabase.from("teachers").insert({
-        user_id: result.user_id,
-        qualification: data.qualification ?? null,
-        experience_years: data.experience_years ?? 0,
-      });
-      if (error) throw error;
+      if (error) throw new Error(error.message);
+      if (result?.error) throw new Error(result.error);
     },
     onSuccess: () => { toast.success("Teacher created!"); qc.invalidateQueries({ queryKey: ["teachers-list"] }); setOpenCreate(false); createForm.reset(); },
     onError: (e: Error) => toast.error(e.message),
@@ -115,7 +146,43 @@ export default function AdminTeachers() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["teachers-list"] }),
   });
 
-  const filtered = teachers?.filter(t => (t as any).profiles?.name?.toLowerCase().includes(search.toLowerCase()));
+  const deleteTeacher = useMutation({
+    mutationFn: async (teacher: any) => {
+      // Delete teacher record first
+      const { error } = await supabase.from("teachers").delete().eq("id", teacher.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Teacher deleted!");
+      qc.invalidateQueries({ queryKey: ["teachers-list"] });
+      setDeletingTeacher(null);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const updateTeacher = useMutation({
+    mutationFn: async (data: { teacherId: string; name: string; phone: string; qualification: string; experience_years: number }) => {
+      // Update profile
+      const { data: teacher } = await supabase.from("teachers").select("user_id").eq("id", data.teacherId).single();
+      if (teacher) {
+        await supabase.from("profiles").update({ name: data.name, phone: data.phone ?? null }).eq("user_id", teacher.user_id);
+      }
+      // Update teacher record
+      const { error } = await supabase.from("teachers").update({
+        qualification: data.qualification ?? null,
+        experience_years: data.experience_years ?? 0,
+      }).eq("id", data.teacherId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Teacher updated!");
+      qc.invalidateQueries({ queryKey: ["teachers-list"] });
+      setEditingTeacher(null);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const filtered = teachers?.filter(t => t.profile?.name?.toLowerCase().includes(search.toLowerCase()));
 
   return (
     <div className="space-y-6">
@@ -131,13 +198,14 @@ export default function AdminTeachers() {
             </DialogTrigger>
             <DialogContent>
               <DialogHeader><DialogTitle>Assign Teacher to Class</DialogTitle></DialogHeader>
+              <DialogDescription>Assign a teacher to a specific class and section with a subject.</DialogDescription>
               <form onSubmit={assignForm.handleSubmit(d => assignTeacher.mutate(d))} className="space-y-4">
                 <div>
                   <Label>Teacher</Label>
                   <Controller name="teacher_id" control={assignForm.control} render={({ field }) => (
                     <Select onValueChange={field.onChange} value={field.value}>
                       <SelectTrigger><SelectValue placeholder="Select teacher" /></SelectTrigger>
-                      <SelectContent>{teachers?.map((t: any) => <SelectItem key={t.id} value={t.id}>{t.profiles?.name}</SelectItem>)}</SelectContent>
+                      <SelectContent>{teachers?.map((t: any) => <SelectItem key={t.id} value={t.id}>{t.profile?.name}</SelectItem>)}</SelectContent>
                     </Select>
                   )} />
                 </div>
@@ -181,6 +249,7 @@ export default function AdminTeachers() {
             </DialogTrigger>
             <DialogContent>
               <DialogHeader><DialogTitle>Add New Teacher</DialogTitle></DialogHeader>
+              <DialogDescription>Enter the teacher's details to create a new account.</DialogDescription>
               <form onSubmit={createForm.handleSubmit(d => createTeacher.mutate(d))} className="space-y-4">
                 <div className="grid grid-cols-2 gap-3">
                   <div><Label>Full Name *</Label><Input {...createForm.register("name")} placeholder="Teacher name" /></div>
@@ -210,11 +279,21 @@ export default function AdminTeachers() {
               <div className="flex items-start gap-3">
                 <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
                   style={{ background: "hsl(var(--primary) / 0.1)", color: "hsl(var(--primary))" }}>
-                  {t.profiles?.name?.charAt(0).toUpperCase()}
+                  {t.profile?.name?.charAt(0).toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold truncate">{t.profiles?.name}</p>
-                  <p className="text-xs truncate" style={{ color: "hsl(var(--muted-foreground))" }}>{t.profiles?.email}</p>
+                  <div className="flex items-center justify-between">
+                    <p className="font-semibold truncate">{t.profile?.name}</p>
+                    <div className="flex gap-1">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditingTeacher(t)}>
+                        <Edit className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-red-500" onClick={() => setDeletingTeacher(t)}>
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="text-xs truncate" style={{ color: "hsl(var(--muted-foreground))" }}>{t.profile?.email}</p>
                   {t.qualification && <p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>{t.qualification} · {t.experience_years}yr exp</p>}
                 </div>
               </div>
@@ -234,6 +313,57 @@ export default function AdminTeachers() {
             </div>
           ))}
       </div>
+
+      {/* Edit Teacher Dialog */}
+      <Dialog open={!!editingTeacher} onOpenChange={(open) => !open && setEditingTeacher(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit Teacher</DialogTitle></DialogHeader>
+          <DialogDescription>Update teacher details.</DialogDescription>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const formData = new FormData(e.currentTarget);
+            updateTeacher.mutate({
+              teacherId: editingTeacher.id,
+              name: formData.get("name") as string,
+              phone: formData.get("phone") as string,
+              qualification: formData.get("qualification") as string,
+              experience_years: parseInt(formData.get("experience_years") as string) || 0,
+            });
+          }} className="space-y-4">
+            <div>
+              <Label>Full Name</Label>
+              <Input name="name" defaultValue={editingTeacher?.profile?.name} />
+            </div>
+            <div>
+              <Label>Phone</Label>
+              <Input name="phone" defaultValue={editingTeacher?.profile?.phone} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Qualification</Label>
+                <Input name="qualification" defaultValue={editingTeacher?.qualification} />
+              </div>
+              <div>
+                <Label>Experience (years)</Label>
+                <Input name="experience_years" type="number" defaultValue={editingTeacher?.experience_years} />
+              </div>
+            </div>
+            <Button type="submit" className="w-full" disabled={updateTeacher.isPending}>Save Changes</Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Teacher Confirmation Dialog */}
+      <Dialog open={!!deletingTeacher} onOpenChange={(open) => !open && setDeletingTeacher(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Delete Teacher</DialogTitle></DialogHeader>
+          <DialogDescription>Are you sure you want to delete {deletingTeacher?.profile?.name}? This will remove their teacher record but not their login account.</DialogDescription>
+          <div className="flex gap-3 justify-end">
+            <Button variant="outline" onClick={() => setDeletingTeacher(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => deleteTeacher.mutate(deletingTeacher)} disabled={deleteTeacher.isPending}>Delete</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

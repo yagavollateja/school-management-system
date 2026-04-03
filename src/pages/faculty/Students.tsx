@@ -15,30 +15,75 @@ export default function FacultyStudents() {
   const { data: teacher } = useQuery({
     queryKey: ["my-teacher", profile?.user_id],
     queryFn: async () => {
-      const { data } = await supabase.from("teachers").select("*, teacher_assignments(*, classes(name), sections(name))")
+      const { data } = await supabase.from("teachers").select("id, user_id")
         .eq("user_id", profile!.user_id).single();
       return data;
     },
     enabled: !!profile?.user_id,
   });
 
-  const assignments = (teacher as any)?.teacher_assignments ?? [];
-  const uniqueSections = [...new Map(assignments.map((a: any) => [a.section_id, a])).values()];
+  const { data: assignments } = useQuery({
+    queryKey: ["teacher-assignments", teacher?.id],
+    queryFn: async () => {
+      if (!teacher?.id) return [];
+      const { data } = await supabase
+        .from("teacher_assignments")
+        .select("id, section_id, class_id, subject, classes(name), sections(name)")
+        .eq("teacher_id", teacher.id);
+      return data ?? [];
+    },
+    enabled: !!teacher?.id,
+  });
+
+  const uniqueSections = assignments?.map((a: any) => ({
+    ...a,
+    sectionId: a.section_id,
+    className: a.classes?.name,
+    sectionName: a.sections?.name,
+  })) ?? [];
 
   const { data: students, isLoading } = useQuery({
     queryKey: ["faculty-students-detail", selectedSection],
     queryFn: async () => {
+      if (!selectedSection) return [];
+      
       const { data } = await supabase
         .from("students")
-        .select("*, profiles!students_user_id_fkey(name, email, phone), classes(name), sections(name)")
+        .select("id, user_id, roll_number, class_id, section_id, parent_name, parent_phone, address")
         .eq("section_id", selectedSection)
         .order("roll_number");
-      return data ?? [];
+      
+      if (!data || data.length === 0) return [];
+      
+      const userIds = data.map(s => s.user_id);
+      if (userIds.length === 0) return data;
+      
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("user_id, name, email, phone")
+        .in("user_id", userIds);
+      
+      const classIds = [...new Set(data.map(s => s.class_id))];
+      const [classesRes, sectionsRes] = await Promise.all([
+        supabase.from("classes").select("id, name").in("id", classIds),
+        supabase.from("sections").select("id, name").in("id", [selectedSection])
+      ]);
+      
+      const profileMap = new Map(profiles?.map(p => [p.user_id, p]) ?? []);
+      const classMap = new Map(classesRes.data?.map(c => [c.id, c]) ?? []);
+      const sectionMap = new Map(sectionsRes.data?.map(s => [s.id, s]) ?? []);
+      
+      return data.map(s => ({
+        ...s,
+        profile: profileMap.get(s.user_id) ?? null,
+        classes: classMap.get(s.class_id) ?? null,
+        sections: sectionMap.get(s.section_id) ?? null,
+      }));
     },
     enabled: !!selectedSection,
   });
 
-  const filtered = students?.filter(s => (s as any).profiles?.name?.toLowerCase().includes(search.toLowerCase()));
+  const filtered = students?.filter(s => s.profile?.name?.toLowerCase().includes(search.toLowerCase()));
 
   return (
     <div className="space-y-6">
@@ -54,7 +99,7 @@ export default function FacultyStudents() {
             <SelectTrigger className="w-64"><SelectValue placeholder="Select section" /></SelectTrigger>
             <SelectContent>
               {uniqueSections.map((a: any) => (
-                <SelectItem key={a.section_id} value={a.section_id}>{a.classes?.name} — Section {a.sections?.name}</SelectItem>
+                <SelectItem key={a.sectionId} value={a.sectionId}>{a.className} — Section {a.sectionName}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -88,9 +133,9 @@ export default function FacultyStudents() {
               ) : filtered?.map((s: any) => (
                 <tr key={s.id} style={{ borderTop: "1px solid hsl(var(--border))" }}>
                   <td className="px-4 py-3 font-mono text-xs">{s.roll_number}</td>
-                  <td className="px-4 py-3 font-medium">{s.profiles?.name ?? "—"}</td>
-                  <td className="px-4 py-3" style={{ color: "hsl(var(--muted-foreground))" }}>{s.profiles?.email ?? "—"}</td>
-                  <td className="px-4 py-3" style={{ color: "hsl(var(--muted-foreground))" }}>{s.profiles?.phone ?? "—"}</td>
+                  <td className="px-4 py-3 font-medium">{s.profile?.name ?? "—"}</td>
+                  <td className="px-4 py-3" style={{ color: "hsl(var(--muted-foreground))" }}>{s.profile?.email ?? "—"}</td>
+                  <td className="px-4 py-3" style={{ color: "hsl(var(--muted-foreground))" }}>{s.profile?.phone ?? "—"}</td>
                   <td className="px-4 py-3">{s.classes?.name ?? "—"}</td>
                   <td className="px-4 py-3">{s.sections?.name ?? "—"}</td>
                   <td className="px-4 py-3" style={{ color: "hsl(var(--muted-foreground))" }}>{s.parent_name ?? "—"}</td>

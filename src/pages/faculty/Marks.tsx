@@ -43,22 +43,57 @@ export default function FacultyMarks() {
   const { data: teacher } = useQuery({
     queryKey: ["my-teacher", profile?.user_id],
     queryFn: async () => {
-      const { data } = await supabase.from("teachers").select("*, teacher_assignments(*, classes(name), sections(name))")
+      const { data } = await supabase.from("teachers").select("id, user_id")
         .eq("user_id", profile!.user_id).single();
       return data;
     },
     enabled: !!profile?.user_id,
   });
 
-  const assignments = (teacher as any)?.teacher_assignments ?? [];
-  const uniqueSections = [...new Map(assignments.map((a: any) => [a.section_id, a])).values()];
+  const { data: assignments } = useQuery({
+    queryKey: ["teacher-assignments", teacher?.id],
+    queryFn: async () => {
+      if (!teacher?.id) return [];
+      const { data } = await supabase
+        .from("teacher_assignments")
+        .select("id, section_id, class_id, subject, classes(name), sections(name)")
+        .eq("teacher_id", teacher.id);
+      return data ?? [];
+    },
+    enabled: !!teacher?.id,
+  });
+
+  const uniqueSections = assignments?.map((a: any) => ({
+    ...a,
+    sectionId: a.section_id,
+    className: a.classes?.name,
+    sectionName: a.sections?.name,
+  })) ?? [];
 
   const { data: students } = useQuery({
     queryKey: ["faculty-students", selectedSection],
     queryFn: async () => {
+      if (!selectedSection) return [];
+      
       const { data } = await supabase.from("students")
-        .select("*, profiles!students_user_id_fkey(name)").eq("section_id", selectedSection).order("roll_number");
-      return data ?? [];
+        .select("id, user_id, roll_number")
+        .eq("section_id", selectedSection)
+        .order("roll_number");
+      
+      if (!data) return [];
+      
+      const userIds = data.map(s => s.user_id);
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("user_id, name")
+        .in("user_id", userIds);
+      
+      const profileMap = new Map(profiles?.map(p => [p.user_id, p]) ?? []);
+      
+      return data.map(s => ({
+        ...s,
+        profile: profileMap.get(s.user_id) ?? null,
+      }));
     },
     enabled: !!selectedSection,
   });
@@ -67,17 +102,27 @@ export default function FacultyMarks() {
     queryKey: ["faculty-marks", selectedSection],
     queryFn: async () => {
       if (!students?.length) return [];
+      
       const { data } = await supabase.from("marks")
-        .select(`*, students!inner(*, profiles!students_user_id_fkey(name))`)
+        .select("id, student_id, subject, exam_type, marks_obtained, total_marks, term, created_at")
         .in("student_id", students.map(s => s.id))
         .order("created_at", { ascending: false });
-      return data ?? [];
+      
+      if (!data) return [];
+      
+      const studentMap = new Map(students.map(s => [s.id, s]));
+      
+      return data.map(m => ({
+        ...m,
+        students: studentMap.get(m.student_id) ?? null,
+      }));
     },
     enabled: !!students?.length,
   });
 
   const addMark = useMutation({
     mutationFn: async (data: MarkForm) => {
+      if (!teacher?.id) throw new Error("Teacher not found");
       const { error } = await supabase.from("marks").insert({
         student_id: data.student_id,
         subject: data.subject,
@@ -87,7 +132,7 @@ export default function FacultyMarks() {
         term: data.term,
         academic_year: data.academic_year,
         remarks: data.remarks ?? null,
-        uploaded_by: (teacher as any)?.id,
+        uploaded_by: teacher.id,
       });
       if (error) throw error;
     },
@@ -120,7 +165,7 @@ export default function FacultyMarks() {
                 <Controller name="student_id" control={control} render={({ field }) => (
                   <Select onValueChange={field.onChange} value={field.value}>
                     <SelectTrigger><SelectValue placeholder="Select student" /></SelectTrigger>
-                    <SelectContent>{students?.map((s: any) => <SelectItem key={s.id} value={s.id}>{s.roll_number}. {s.profiles?.name}</SelectItem>)}</SelectContent>
+                    <SelectContent>{students?.map((s: any) => <SelectItem key={s.id} value={s.id}>{s.roll_number}. {s.profile?.name}</SelectItem>)}</SelectContent>
                   </Select>
                 )} />
               </div>
@@ -169,7 +214,7 @@ export default function FacultyMarks() {
           <SelectTrigger className="w-64"><SelectValue placeholder="Select section" /></SelectTrigger>
           <SelectContent>
             {uniqueSections.map((a: any) => (
-              <SelectItem key={a.section_id} value={a.section_id}>{a.classes?.name} — Section {a.sections?.name}</SelectItem>
+              <SelectItem key={a.sectionId} value={a.sectionId}>{a.className} — Section {a.sectionName}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -192,7 +237,7 @@ export default function FacultyMarks() {
                 <tr><td colSpan={6} className="text-center py-8" style={{ color: "hsl(var(--muted-foreground))" }}>No marks uploaded yet</td></tr>
               ) : marks?.map((m: any) => (
                 <tr key={m.id} style={{ borderTop: "1px solid hsl(var(--border))" }}>
-                  <td className="px-4 py-3 font-medium">{m.students?.profiles?.name ?? "—"}</td>
+                  <td className="px-4 py-3 font-medium">{m.students?.profile?.name ?? "—"}</td>
                   <td className="px-4 py-3">{m.subject}</td>
                   <td className="px-4 py-3 capitalize">{m.exam_type?.replace("_", " ")}</td>
                   <td className="px-4 py-3">{m.term}</td>

@@ -11,25 +11,31 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const supabaseAdmin = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    );
-
-    // Verify the requester is an admin
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    
+    if (!supabaseUrl || !serviceRoleKey) {
+      return new Response(JSON.stringify({ error: "Missing configuration" }), {
+        status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const token = authHeader.replace("Bearer ", "");
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    });
+
+    const authHeader = req.headers.get("Authorization") ?? "";
+    let userId: string | null = null;
+    
+    if (authHeader.startsWith("Bearer ")) {
+      const token = authHeader.replace("Bearer ", "");
+      const { data: { user } } = await supabaseAdmin.auth.getUser(token);
+      userId = user?.id ?? null;
+    }
+    
+    if (!userId) {
+      return new Response(JSON.stringify({ error: "Unauthorized: No valid session" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -39,21 +45,31 @@ Deno.serve(async (req) => {
     const { data: profile } = await supabaseAdmin
       .from("profiles")
       .select("role")
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
       .single();
 
     if (!profile || profile.role !== "admin") {
-      return new Response(JSON.stringify({ error: "Forbidden: Admin only" }), {
+      return new Response(JSON.stringify({ error: "Forbidden: Admin only. Your role: " + (profile?.role ?? "none") }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const body = await req.json();
-    const { name, email, password, role, phone } = body;
+    const { name, email, password, role, phone, class_id, section_id, roll_number, parent_name, parent_phone, address, date_of_birth } = body;
 
     if (!name || !email || !password || !role) {
-      return new Response(JSON.stringify({ error: "Missing required fields" }), {
+      return new Response(JSON.stringify({ error: "Missing required fields: name, email, password, role" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Check if email already exists
+    const { data: users } = await supabaseAdmin.auth.admin.listUsers();
+    const emailExists = users?.users.some(u => u.email?.toLowerCase() === email.toLowerCase());
+    if (emailExists) {
+      return new Response(JSON.stringify({ error: "Email already in use" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -74,8 +90,8 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Upsert profile (trigger may have already created it)
-    const { error: profileError } = await supabaseAdmin.from("profiles").upsert({
+    // Create profile
+    await supabaseAdmin.from("profiles").upsert({
       user_id: newUser.user.id,
       name,
       email,
@@ -83,15 +99,32 @@ Deno.serve(async (req) => {
       phone: phone ?? null,
     }, { onConflict: "user_id" });
 
-    if (profileError) {
-      return new Response(JSON.stringify({ error: profileError.message }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+    // Create student record
+    if (role === "student" && class_id && section_id) {
+      const studentRoll = roll_number || 1;
+      await supabaseAdmin.from("students").insert({
+        user_id: newUser.user.id,
+        class_id,
+        section_id,
+        roll_number: studentRoll,
+        parent_name: parent_name ?? null,
+        parent_phone: parent_phone ?? null,
+        address: address ?? null,
+        date_of_birth: date_of_birth ?? null,
+      });
+    }
+
+    // Create teacher record
+    if (role === "faculty") {
+      await supabaseAdmin.from("teachers").insert({
+        user_id: newUser.user.id,
+        qualification: "TBD",
+        experience_years: 0,
       });
     }
 
     return new Response(
-      JSON.stringify({ success: true, user_id: newUser.user.id }),
+      JSON.stringify({ success: true, user_id: newUser.user.id, message: "User created successfully" }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

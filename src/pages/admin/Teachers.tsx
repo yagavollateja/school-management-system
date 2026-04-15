@@ -31,7 +31,7 @@ const assignSchema = z.object({
 type TeacherForm = z.infer<typeof teacherSchema>;
 type AssignForm = z.infer<typeof assignSchema>;
 
-const SUBJECTS = ["Mathematics", "English", "Hindi", "Science", "Social Studies", "Computer", "Art", "Physical Education", "EVS", "GK"];
+const FALLBACK_SUBJECTS = ["Mathematics", "English", "Hindi", "Science", "Social Studies", "Computer", "Art", "Physical Education", "EVS", "GK"];
 
 export default function AdminTeachers() {
   const qc = useQueryClient();
@@ -93,6 +93,16 @@ export default function AdminTeachers() {
       return data ?? [];
     },
   });
+
+  const { data: subjectList } = useQuery({
+    queryKey: ["subjects-list"],
+    queryFn: async () => {
+      const { data } = await supabase.from("subjects").select("name").order("order_index");
+      return data?.map(s => s.name) ?? [];
+    },
+  });
+
+  const availableSubjects = subjectList && subjectList.length > 0 ? subjectList : FALLBACK_SUBJECTS;
 
   const { data: sections } = useQuery({
     queryKey: ["sections", selectedClassAssign],
@@ -234,7 +244,7 @@ export default function AdminTeachers() {
                   <Controller name="subject" control={assignForm.control} render={({ field }) => (
                     <Select onValueChange={field.onChange} value={field.value}>
                       <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
-                      <SelectContent>{SUBJECTS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                      <SelectContent>{availableSubjects.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                     </Select>
                   )} />
                 </div>

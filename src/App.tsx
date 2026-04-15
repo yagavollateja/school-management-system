@@ -17,6 +17,7 @@ import AdminAttendance from "@/pages/admin/Attendance";
 import AdminMarks from "@/pages/admin/Marks";
 import AdminFees from "@/pages/admin/Fees";
 import AdminClasses from "@/pages/admin/Classes";
+import AdminSubjects from "@/pages/admin/Subjects";
 import FacultyDashboard from "@/pages/faculty/Dashboard";
 import FacultyAttendance from "@/pages/faculty/Attendance";
 import FacultyMarks from "@/pages/faculty/Marks";
@@ -78,6 +79,7 @@ function AuthGate() {
         <Route path="marks" element={<AdminMarks />} />
         <Route path="fees" element={<AdminFees />} />
         <Route path="classes" element={<AdminClasses />} />
+        <Route path="subjects" element={<AdminSubjects />} />
       </Route>
 
       {/* Faculty Routes */}

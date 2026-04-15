@@ -142,7 +142,7 @@ export default function AdminMarks() {
                 const { grade, color } = getGrade(Number(m.marks_obtained), Number(m.total_marks));
                 return (
                   <tr key={m.id} style={{ borderTop: "1px solid hsl(var(--border))" }}>
-                    <td className="px-4 py-3 font-medium">{m.students?.profiles?.name ?? "—"}</td>
+                    <td className="px-4 py-3 font-medium">{m.students?.profile?.name ?? "—"}</td>
                     <td className="px-4 py-3">{m.students?.classes?.name ?? "—"}</td>
                     <td className="px-4 py-3">{m.students?.sections?.name ?? "—"}</td>
                     <td className="px-4 py-3">{m.subject}</td>

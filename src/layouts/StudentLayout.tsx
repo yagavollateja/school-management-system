@@ -1,7 +1,7 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/store/authStore";
 import { Button } from "@/components/ui/button";
-import { GraduationCap, LayoutDashboard, ClipboardList, BookOpen, DollarSign, LogOut, ChevronRight } from "lucide-react";
+import { GraduationCap, LayoutDashboard, ClipboardList, BookOpen, DollarSign, LogOut, ChevronRight, FileText } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 
@@ -9,6 +9,7 @@ const navItems = [
   { to: "/student", icon: LayoutDashboard, label: "My Dashboard", end: true },
   { to: "/student/attendance", icon: ClipboardList, label: "Attendance" },
   { to: "/student/marks", icon: BookOpen, label: "My Results" },
+  { to: "/student/marks-memo", icon: FileText, label: "My Marks Memo" },
   { to: "/student/fees", icon: DollarSign, label: "Fee Status" },
 ];
 

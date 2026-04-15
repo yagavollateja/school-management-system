@@ -15,6 +15,7 @@ import AdminStudents from "@/pages/admin/Students";
 import AdminTeachers from "@/pages/admin/Teachers";
 import AdminAttendance from "@/pages/admin/Attendance";
 import AdminMarks from "@/pages/admin/Marks";
+import AdminMarksMemo from "@/pages/admin/MarksMemo";
 import AdminFees from "@/pages/admin/Fees";
 import AdminClasses from "@/pages/admin/Classes";
 import AdminSubjects from "@/pages/admin/Subjects";
@@ -25,6 +26,7 @@ import FacultyStudents from "@/pages/faculty/Students";
 import StudentDashboard from "@/pages/student/Dashboard";
 import StudentAttendance from "@/pages/student/Attendance";
 import StudentMarks from "@/pages/student/Marks";
+import StudentMarksMemo from "@/pages/student/MarksMemo";
 import StudentFees from "@/pages/student/Fees";
 import NotFound from "@/pages/NotFound";
 
@@ -77,6 +79,7 @@ function AuthGate() {
         <Route path="teachers" element={<AdminTeachers />} />
         <Route path="attendance" element={<AdminAttendance />} />
         <Route path="marks" element={<AdminMarks />} />
+        <Route path="marks-memo" element={<AdminMarksMemo />} />
         <Route path="fees" element={<AdminFees />} />
         <Route path="classes" element={<AdminClasses />} />
         <Route path="subjects" element={<AdminSubjects />} />
@@ -95,6 +98,7 @@ function AuthGate() {
         <Route index element={<StudentDashboard />} />
         <Route path="attendance" element={<StudentAttendance />} />
         <Route path="marks" element={<StudentMarks />} />
+        <Route path="marks-memo" element={<StudentMarksMemo />} />
         <Route path="fees" element={<StudentFees />} />
       </Route>
 

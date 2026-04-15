@@ -3,7 +3,7 @@ import { useAuthStore } from "@/store/authStore";
 import { Button } from "@/components/ui/button";
 import {
   GraduationCap, LayoutDashboard, Users, UserCheck,
-  ClipboardList, BookOpen, DollarSign, LogOut, School, ChevronRight, BookMarked
+  ClipboardList, BookOpen, DollarSign, LogOut, School, ChevronRight, BookMarked, FileText
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -15,7 +15,8 @@ const navItems = [
   { to: "/admin/classes", icon: School, label: "Classes & Sections" },
   { to: "/admin/subjects", icon: BookMarked, label: "Subjects" },
   { to: "/admin/attendance", icon: ClipboardList, label: "Attendance" },
-  { to: "/admin/marks", icon: BookOpen, label: "Marks & Results" },
+  { to: "/admin/marks", icon: BookOpen, label: "Marks Entry" },
+  { to: "/admin/marks-memo", icon: FileText, label: "Marks Memo" },
   { to: "/admin/fees", icon: DollarSign, label: "Fees" },
 ];
 
